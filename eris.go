@@ -17,9 +17,29 @@ func New(msg string) error {
 	}
 }
 
+// New creates a new root error with a static message.
+func NewSkip(msg string) error {
+	stack := callers(4) // callers(3) skips this method, stack.callers, runtime.Callers, and one extra frame
+	return &rootError{
+		global: stack.isGlobal(),
+		msg:    msg,
+		stack:  stack,
+	}
+}
+
 // Errorf creates a new root error with a formatted message.
 func Errorf(format string, args ...interface{}) error {
 	stack := callers(3)
+	return &rootError{
+		global: stack.isGlobal(),
+		msg:    fmt.Sprintf(format, args...),
+		stack:  stack,
+	}
+}
+
+// Errorf creates a new root error with a formatted message.
+func ErrorSkipf(format string, args ...interface{}) error {
+	stack := callers(4) // It skips only one extra frame
 	return &rootError{
 		global: stack.isGlobal(),
 		msg:    fmt.Sprintf(format, args...),
@@ -36,26 +56,48 @@ func Errorf(format string, args ...interface{}) error {
 // interface, it flattens the error and creates a new root error from it before wrapping with the additional
 // context.
 func Wrap(err error, msg string) error {
-	return wrap(err, fmt.Sprint(msg))
+	//return wrap(err, fmt.Sprint(msg))
+	return wrap(0, err, fmt.Sprint(msg))
+}
+
+// Wrap adds additional context to all error types while maintaining the type of the original error.
+//
+// This method behaves differently for each error type. For root errors, the stack trace is reset to the current
+// callers which ensures traces are correct when using global/sentinel error values. Wrapped error types are simply
+// wrapped with the new context. For external types (i.e. something other than root or wrap errors), this method
+// attempts to unwrap them while building a new error chain. If an external type does not implement the unwrap
+// interface, it flattens the error and creates a new root error from it before wrapping with the additional
+// context.
+// It skips only one extra frame
+func WrapSkip(err error, msg string) error {
+	return wrap(1, err, fmt.Sprint(msg))
 }
 
 // Wrapf adds additional context to all error types while maintaining the type of the original error.
 //
 // This is a convenience method for wrapping errors with formatted messages and is otherwise the same as Wrap.
 func Wrapf(err error, format string, args ...interface{}) error {
-	return wrap(err, fmt.Sprintf(format, args...))
+	return wrap(0, err, fmt.Sprintf(format, args...))
 }
 
-func wrap(err error, msg string) error {
+// WrapSkipf adds additional context to all error types while maintaining the type of the original error.
+// It skips only one extra frame
+//
+// This is a convenience method for wrapping errors with formatted messages and is otherwise the same as Wrap.
+func WrapSkipf(err error, format string, args ...interface{}) error {
+	return wrap(1, err, fmt.Sprintf(format, args...))
+}
+
+func wrap(skiplevel int, err error, msg string) error {
 	if err == nil {
 		return nil
 	}
 
 	// callers(4) skips runtime.Callers, stack.callers, this method, and Wrap(f)
-	stack := callers(4)
+	stack := callers(4 + skiplevel)
 	// caller(3) skips stack.caller, this method, and Wrap(f)
 	// caller(skip) has a slightly different meaning which is why it's not 4 as above
-	frame := caller(3)
+	frame := caller(3 + skiplevel)
 	switch e := err.(type) {
 	case *rootError:
 		if e.global {
